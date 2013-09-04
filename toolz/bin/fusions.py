@@ -141,7 +141,7 @@ class PfamConnector(BaseWithLogger):
         reason = e.reason
       else:
         reason = e
-      self.logger.error("Could not communicate with '%s', reason: '%s'.", self.PFAM_SEARCH_URL, reason)
+      self.logger.error("Could not communicate with '%s', reason: '%s', please retry.", PFAM_DOMAIN, reason)
       sys.exit(1)
 
     try:
@@ -215,7 +215,16 @@ class PfamConnector(BaseWithLogger):
     ##req.add_header('User-Agent', 'curl/7.30.0')
     ##req.add_header('User-Agent', 'curl/7.24.0 (x86_64-apple-darwin12.0) libcurl/7.24.0 OpenSSL/0.9.8x zlib/1.2.5')
     self.logger.debug("Retrieving content from '%s'...", url)
-    result = urllib2.urlopen(req, timeout = 10)
+    try:
+      result = urllib2.urlopen(req, timeout = 30)
+    except (urllib2.URLError, socket.timeout) as e:
+      if hasattr(e, 'reason'):
+        reason = e.reason
+      else:
+        reason = e
+      self.logger.error("Could not communicate with '%s', reason: '%s', please retry.", PFAM_DOMAIN, reason)
+      sys.exit(1)
+
     content = result.read()
     result.close()
     return content
