@@ -1,0 +1,283 @@
+#!/usr/bin/env python2.7
+from __future__ import with_statement
+
+import os, sys, urllib2, logging, time, urllib
+#from bs4 import BeautifulSoup
+from argparse import ArgumentParser
+from xml.dom.minidom import parse
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
+from bs4 import BeautifulSoup
+
+__doc__ = "some doc text here"
+program_name = os.path.basename(os.path.abspath(__file__))
+
+
+def setup_logger(level):
+  ### set up root level logger first
+  root_logger = logging.getLogger()
+  root_logger.setLevel(level)
+  hdl = logging.StreamHandler()
+  hdl.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)-8s %(message)s', '%m-%d-%y %H:%M'))
+  root_logger.addHandler(hdl)
+
+
+class BaseWithLogger(object):
+  def __init__(self, class_name):
+    self.logger = logging.getLogger(class_name)
+
+
+class Architectures(BaseWithLogger):
+  def __init__(self):
+    super(Architectures, self).__init__(self .__class__.__name__)
+    self.architectures = {}
+    self.details = {}
+    self.family_descriptions = {}
+
+  def add_architecture(self, orf_name, pfam_family, pfam_family_name, primary_protein_id, description):
+    description = " ".join(description.split())
+    self.architectures[(orf_name,pfam_family,pfam_family_name,primary_protein_id)] = description
+    self.family_descriptions[pfam_family] = description
+
+  #def get_architectures_ids(self):
+  #  return self.architectures.keys()
+
+  def add_details(self, orf_name, pfam_family, pfam_family_name, text, description):
+    protein_id = text.split('[')[0].strip()
+    organism_name = text.split('[')[1].split(']')[0]
+    function  = text.split(']')[1].split('(')[0].strip()
+    length  = text.split('(')[-1].split('residues)')[0]
+
+    self.details[(orf_name,pfam_family,pfam_family_name,protein_id)] = (organism_name, function, length, description)
+
+
+class FastaReader(BaseWithLogger):
+  def __init__(self, fname):
+    super(FastaReader, self).__init__(self .__class__.__name__)
+
+    if not os.path.exists(fname):
+      self.logger.error("Could not find '%s' input fasta file.", fname)
+      sys.exit(1)
+
+    self.logger.debug("Found '%s' input fasta file.", fname)
+    self.fname = fname
+
+
+  @property
+  def records(self):
+    name, alias, seq = None, '', ''
+    with open(self.fname) as f:
+      current_name, current_alias = None, None
+      for ln in f:
+        ln = ln.strip()
+        if not len(ln):
+          continue
+
+        if ln.startswith('>'):
+          fields = ln.lstrip('>').split(' ')
+          if len(fields) == 1:
+            name = fields[0]
+            alias = ''
+          elif len(fields) >= 2:
+            name = fields[0]
+            alias = ' '.join(fields[1:])
+          else:
+            self.logger.error("Could not find the sequence id in '%s' fasta file", self.fname)
+            sys.exit(1)
+
+          if current_name is not None:
+            yield (current_name, current_alias, seq)
+            seq = ''
+          else:
+            current_name = name
+            current_alias = alias
+        else:
+          seq += ln
+    yield (name, alias, seq)
+
+
+class PfamConnector(BaseWithLogger):
+  #PFAM_FAMILY_URL = 'http://pfam.sanger.ac.uk/family'
+  #PFAM_SEARCH_URL = 'http://pfam.sanger.ac.uk/search/sequence'
+  #PFAM_DOMAIGRAPHS_URL = 'http://pfam.sanger.ac.uk/domaingraphics'
+
+  PFAM_FAMILY_URL = 'http://pfam.janelia.org/family'
+  PFAM_SEARCH_URL = 'http://pfam.janelia.org/search/sequence'
+  PFAM_DOMAIGRAPHS_URL = 'http://pfam.janelia.org/domaingraphics'
+
+
+  def __init__(self):
+    super(PfamConnector, self).__init__(self .__class__.__name__)
+    self.job_ids = {}
+    self.pfam_families_for_orf = {}
+
+
+  def submit_sequence_for_search(self, orf_name, seq):
+    req = urllib2.Request(self.PFAM_SEARCH_URL)
+    req.add_data(urllib.urlencode({'seq':seq, 'output':'xml'}))
+    req.add_header('Expect', '')
+    self.logger.info("Submitting orf '%s' sequence to PFAM for sequence search.", orf_name)
+    try:
+      dom = parse(urllib2.urlopen(req, timeout=5))
+    except urllib2.URLError as e:
+      self.logger.error("Could not communicate with '%s', reason: '%s'.", self.PFAM_SEARCH_URL, e.reason)
+      sys.exit(1)
+    try:
+      ### u'http://pfam.sanger.ac.uk/search/sequence/resultset/A02BCFCC-0A0D-11E3-995B-6CD0AFE119EF?output=xml'
+      job_id_url = dom.getElementsByTagName('result_url')[0].childNodes[0].data
+      self.job_ids[orf_name] = job_id_url
+    except IndexError:
+      self.logger.error("Search server did not accept '%s' orf's sequence for search, "
+                        "please try this sequence again later.", orf_name)
+
+
+  def collect_results_for_search_jobs(self):
+    while True:
+      time.sleep(3)
+      keys = self.job_ids.keys()
+      if not len(keys):
+        break
+      for orf_name in keys:
+        self.logger.info("Checking job status for orf '%s' ...", orf_name)
+        jobs_id = self.job_ids.get(orf_name)
+        result = urllib2.urlopen(jobs_id)
+        if result.getcode() == 200:
+          self.logger.debug("Received results for orf '%s'", orf_name)
+          self.__get_pfam_families_from_searach_results(orf_name, result)
+          self.job_ids.pop(orf_name)
+        elif result.getcode() == 202:
+          self.logger.info("Still waiting on results for orf '%s'", orf_name)
+        elif result.getcode() == 502:
+          self.logger.info("The job for orf '%s' failed on the search system side. "
+                           "Please try to resubmit this orf again.", orf_name)
+          self.job_ids.pop(orf_name)
+        elif result.getcode() == 503:
+          self.logger.info("The job for orf '%s' is put on hold by server Admin. "
+                           "You may want to contact them or wait and try to resubmit this orf again.", orf_name)
+          self.job_ids.pop(orf_name)
+        elif result.getcode() == 401:
+          self.logger.info("The job for orf '%s' was deleted from the search system by server Admin. "
+                           "There was probably a problem with the job and you should contact the help "
+                           "desk for assistance with it, or wait and try to resubmit this orf again.", orf_name)
+          self.job_ids.pop(orf_name)
+        elif result.getcode() == 500:
+          self.logger.info("The job for orf '%s' is put on hold by server Admin. "
+                           "You may want to contact them or wait and try to resubmit this orf again.", orf_name)
+          self.job_ids.pop(orf_name)
+        else:
+          self.logger.warning("Got unexpected status code '%s' for orf '%s'. Do not know what to do, will skip "
+                              "this orf. Please contact developer.", result.getcode(), orf_name)
+          self.job_ids.pop(orf_name)
+
+
+  def __get_pfam_families_from_searach_results(self, orf_name, result_object):
+    #result_object = open('output')
+    dom = parse(result_object)
+    for element in dom.getElementsByTagName('match'):
+      self.pfam_families_for_orf.setdefault(orf_name,[]).append(element.attributes.getNamedItem('accession').value)
+
+
+  def __get_pfam_family_name(self, pfam_family):
+    self.logger.debug("Retrieving family name for '%s'.", pfam_family)
+    url = '/'.join((self.PFAM_FAMILY_URL,pfam_family)) + '?output=xml'
+    result = urllib2.urlopen(url).read()
+    soup = BeautifulSoup(result)
+    return soup.entry['id']
+
+
+  def process_found_pfam_families(self):
+    architectures = Architectures()
+    for orf_name, pfam_families in self.pfam_families_for_orf.iteritems():
+      self.logger.info("Processing pfam families for orf '%s' ...", orf_name)
+      for pfam_family in pfam_families:
+        self.logger.debug("Processing pfam family '%s', may take some time ...", pfam_family)
+
+        pfam_family_name = self.__get_pfam_family_name(pfam_family)
+
+        result = urllib2.urlopen('/'.join((self.PFAM_DOMAIGRAPHS_URL,pfam_family))).read()
+        soup = BeautifulSoup(result)
+
+        for div in soup.find_all('div'):
+            if div.has_attr('class') and div.has_attr('id') and ('graphicRow' in div['class']) and div['id'].startswith('row'):
+              primary_id = div['id'].lstrip('row')
+              description = div.h3.text.strip()
+              architecture_name = description.split('architecture:')[1]
+
+              ## keep line with ' x ' or ','
+              if (' x ' in architecture_name) or (',' in architecture_name):
+                architectures.add_architecture(orf_name,pfam_family,pfam_family_name,primary_id,description)
+
+        lines = str(soup.script.string.split('var layout')[0]).split('\n')
+        for n, ln in enumerate(lines):
+          ln = ln.strip()
+          for (_, pfam_family, pfam_family_name, id), description in architectures.architectures.iteritems():
+            if 'row%s' % id in ln:
+              accessor = lines[n+1].split('.store( "arch",')[1].strip().replace('"','').replace(' );','')
+              url = '/'.join((self.PFAM_DOMAIGRAPHS_URL,pfam_family))
+              url = '?arch='.join((url,accessor))
+              self.logger.debug("Receiving architectures for '%s', may take some time, please wait ...", url)
+
+              result = urllib2.urlopen(url).read()
+              soup = BeautifulSoup(result)
+              for item in soup.div.find_all('div'):
+                if not len(item):
+                  continue
+                text = ' '.join(item.text.split())
+                architectures.add_details(orf_name,pfam_family,pfam_family_name,text, description)
+                ##architectures.add_details(orf_name,pfam_family,pfam_family_name,text, '')
+    return architectures
+
+
+def process(options):
+  setup_logger(options.vlevel)
+  logger = logging.getLogger(program_name)
+
+  orf_name_to_alias = {}
+  fasta_reader = FastaReader(options.input_file[0])
+  pfam_connector = PfamConnector()
+  for orf_name, alias, seq in fasta_reader.records:
+    logger.debug("Read fasta record for ORF '%s'.", orf_name)
+    orf_name_to_alias[orf_name] = alias
+    pfam_connector.submit_sequence_for_search(orf_name, seq)
+    time.sleep(2)
+
+  pfam_connector.collect_results_for_search_jobs()
+  architectures = pfam_connector.process_found_pfam_families()
+
+  with open(options.output_summary_file[0],'w') as f:
+    header = "ORF ID\tFunction\tPfam family\tNumber of seqs with this architecture\tRepresentative Protein ID\tDomains"
+    f.write("%s\n" % header)
+
+    for (orf_name,pfam_family, pfam_family_name, primary_protein_id), description in architectures.architectures.iteritems():
+      if 'There is' in description:
+        num_of_seq = description.split('There is')[1].strip().split()[0]
+      else:
+        num_of_seq = description.split('There are')[1].strip().split()[0]
+      domains = '\t'.join(description.split('architecture:')[1].strip().split(','))
+      f.write("%s\t%s\t%s (%s)\t%s\t%s\t%s\n" %(orf_name, orf_name_to_alias[orf_name], pfam_family_name, pfam_family,
+                                                num_of_seq, primary_protein_id, domains))
+
+  with open(options.output_details_file[0],'w') as f:
+    header = 'ORF ID\tFunction\tPfam family\tArchitecture, with statistics\tProtein ID\tFunction\tLength\tOrganism Name'
+    f.write("%s\n" % header)
+
+    for (orf_name,pfam_family,pfam_family_name,protein_id), (organism_name, function, length, description) in architectures.details.iteritems():
+      f.write("%s\t%s\t%s (%s)\t%s\t%s\t%s\t%s\t%s\n"
+              %(orf_name, orf_name_to_alias[orf_name], pfam_family_name, pfam_family, description,
+                protein_id, function, length, organism_name))
+
+  return 0
+
+
+def main():
+  parser = ArgumentParser(description = __doc__)
+  parser.add_argument('-v', '--vlevel', type=int, default=20, help="Verbosity logging level. "
+                      "Available levels are:  50:CRITICAL; 40:ERROR; 30:WARNING; 20:INFO; 10:DEBUG. Default: 20")
+  parser.add_argument('input_file', nargs=1, help='Fasta formatted input file name.' )
+  parser.add_argument('output_summary_file', nargs=1, help='The summary result file name.')
+  parser.add_argument('output_details_file', nargs=1, help='The details result file name.')
+  options = parser.parse_args()
+  return process(options)
+
+if __name__ == "__main__":
+  sys.exit(main())
