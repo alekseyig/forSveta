@@ -15,6 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
 import html5lib
 from bs4 import BeautifulSoup
 
+DEFAULT_TIMEOUT = 60
 PFAM_DOMAIN = 'http://pfam.sanger.ac.uk'
 ##PFAM_DOMAIN = 'http://pfam.janelia.org'
 
@@ -135,7 +136,7 @@ class PfamConnector(BaseWithLogger):
     req.add_header('Expect', '')
     self.logger.info("Submitting orf '%s' sequence for sequence search.", orf_name)
     try:
-      dom = parse(urllib2.urlopen(req, timeout=5))
+      dom = parse(urllib2.urlopen(req, timeout=DEFAULT_TIMEOUT))
     except (urllib2.URLError, socket.timeout) as e:
       if hasattr(e, 'reason'):
         reason = e.reason
@@ -216,7 +217,7 @@ class PfamConnector(BaseWithLogger):
     ##req.add_header('User-Agent', 'curl/7.24.0 (x86_64-apple-darwin12.0) libcurl/7.24.0 OpenSSL/0.9.8x zlib/1.2.5')
     self.logger.debug("Retrieving content from '%s'...", url)
     try:
-      result = urllib2.urlopen(req, timeout = 30)
+      result = urllib2.urlopen(req, timeout = DEFAULT_TIMEOUT)
     except (urllib2.URLError, socket.timeout) as e:
       if hasattr(e, 'reason'):
         reason = e.reason
