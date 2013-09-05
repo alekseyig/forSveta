@@ -15,7 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
 import html5lib
 from bs4 import BeautifulSoup
 
-DEFAULT_TIMEOUT = 60
+DEFAULT_TIMEOUT = 60 * 10
 PFAM_DOMAIN = 'http://pfam.sanger.ac.uk'
 ##PFAM_DOMAIN = 'http://pfam.janelia.org'
 
@@ -110,6 +110,8 @@ class FastaReader(BaseWithLogger):
 
           if current_name is not None:
             yield (current_name, current_alias, seq)
+            current_name = name
+            current_alias = alias
             seq = ''
           else:
             current_name = name
