@@ -335,6 +335,7 @@ def process(options):
   architectures = pfam_connector.process_found_pfam_families()
 
   seed_connector = PubSEEDConnector()
+  logger.info("Looking for FIG ID's ...")
   with open(options.output_summary_file[0],'w') as f:
     header = "ORF ID\tFunction\tPfam family\tNumber of seqs with this architecture\tRepresentative Protein ID\tFIG ID\tDomains"
     f.write("%s\n" % header)
