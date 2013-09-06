@@ -19,6 +19,8 @@ DEFAULT_TIMEOUT = 60 * 10
 PFAM_DOMAIN = 'http://pfam.sanger.ac.uk'
 ##PFAM_DOMAIN = 'http://pfam.janelia.org'
 
+PUBSEED_URL = 'http://pubseed.theseed.org'
+
 
 __doc__ = """This program  takes as input a txt file with a list of query protein sequences in fasta format.
 For each input sequence the code identifies the corresponding Pfam protein family and queries
@@ -119,6 +121,46 @@ class FastaReader(BaseWithLogger):
         else:
           seq += ln
     yield (name, alias, seq)
+
+
+class PubSEEDConnector(BaseWithLogger):
+  def __init__(self):
+    super(PubSEEDConnector, self).__init__(self .__class__.__name__)
+
+  #curl -d "act=do_search&page=Find&pattern=Q04CD7&submit=Search"   'http://pubseed.theseed.org' > /tmp/o
+  def get_fig_id(self, aliases):
+    """
+    returns a tuple of the first found fig id and an alias for which it was found from the given list of aliases,
+    or empty tuple, if cannot find any
+    """
+    for alias in aliases:
+      req = urllib2.Request(PUBSEED_URL)
+      req.add_header('Accept', 'text/javascript, text/html, application/xml, text/xml, */*')
+      req.add_data(urllib.urlencode({'act':'do_search', 'page':'Find', 'pattern':alias.split('_')[0], 'submit':'Search'}))
+      self.logger.debug("Looking for FIG ID for '%s'.", alias)
+      try:
+        result = urllib2.urlopen(req, timeout = DEFAULT_TIMEOUT)
+      except (urllib2.URLError, socket.timeout) as e:
+        if hasattr(e, 'reason'):
+          reason = e.reason
+        else:
+          reason = e
+        self.logger.error("Could not communicate with '%s', reason: '%s', please retry.", PUBSEED_URL, reason)
+        sys.exit(1)
+
+      content = result.read()
+      result.close()
+      soup = BeautifulSoup(content)
+      for _input in soup.find_all('input'):
+        if _input.has_attr('id') and _input['id']=='table_data_0':
+          soup2 = BeautifulSoup(_input['value'])
+          fig_id = soup2.a.text
+          if len(fig_id):
+            self.logger.debug("Found FIG ID '%s'." % fig_id)
+            return alias,fig_id
+
+    return '',''
+
 
 
 class PfamConnector(BaseWithLogger):
@@ -292,8 +334,9 @@ def process(options):
   pfam_connector.collect_results_for_search_jobs()
   architectures = pfam_connector.process_found_pfam_families()
 
+  seed_connector = PubSEEDConnector()
   with open(options.output_summary_file[0],'w') as f:
-    header = "ORF ID\tFunction\tPfam family\tNumber of seqs with this architecture\tRepresentative Protein ID\tDomains"
+    header = "ORF ID\tFunction\tPfam family\tNumber of seqs with this architecture\tRepresentative Protein ID\tFIG ID\tDomains"
     f.write("%s\n" % header)
 
     for architecture in architectures:
@@ -302,11 +345,17 @@ def process(options):
       else:
         num_of_seq = architecture.description.split('There are')[1].strip().split()[0]
       domains = '\t'.join(architecture.description.split('architecture:')[1].strip().split(','))
-      f.write('%s\t%s\t%s (%s)\t%s\t=HYPERLINK("%s/protein/%s","%s")\t%s\n'
+
+      protein_id, fig_id = seed_connector.get_fig_id([member.protein_id for member in architecture.members])
+      if len(fig_id):
+        fig_id = '=HYPERLINK("%s/?page=Annotation&feature=%s","%s")' % (PUBSEED_URL, fig_id, fig_id)
+      else:
+        protein_id = architecture.primary_protein_id
+
+      f.write('%s\t%s\t%s (%s)\t%s\t=HYPERLINK("%s/protein/%s","%s")\t%s\t%s\n'
              %(architecture.orf_name, orf_name_to_alias[architecture.orf_name],
              architecture.pfam_family_name, architecture.pfam_family,
-             num_of_seq, PFAM_DOMAIN, architecture.primary_protein_id,
-             architecture.primary_protein_id, domains))
+             num_of_seq, PFAM_DOMAIN, protein_id, protein_id, fig_id, domains))
 
 
   with open(options.output_details_file[0],'w') as f:
