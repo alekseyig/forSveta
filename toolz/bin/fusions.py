@@ -276,16 +276,18 @@ class PfamConnector(BaseWithLogger):
 
 
   def process_found_pfam_families(self):
-    architectures = []
+    all_architectures = []
     for orf_name, pfam_families in self.pfam_families_for_orf.iteritems():
       self.logger.info("Processing pfam families for orf '%s' ...", orf_name)
       for pfam_family in pfam_families:
+        architectures = []
         self.logger.debug("Processing pfam family '%s'.", pfam_family)
 
         pfam_family_name = self.__get_pfam_family_name(pfam_family)
 
-        url = '/'.join((self.PFAM_DOMAIGRAPHS_URL,pfam_family))
-        soup = BeautifulSoup(self.__get_content(url),'html5lib')
+        self.logger.debug("Requesting architectures for pfam family '%s'.", pfam_family)
+        url = '/'.join((self.PFAM_DOMAIGRAPHS_URL, pfam_family))
+        soup = BeautifulSoup(self.__get_content(url), 'html5lib')
 
         for div in soup.find_all('div'):
           if div.has_attr('class') and div.has_attr('id') and ('graphicRow' in div['class']) and div['id'].startswith('row'):
@@ -304,18 +306,21 @@ class PfamConnector(BaseWithLogger):
           for architecture in architectures:
             if 'row%s' % architecture.primary_protein_id in ln:
               accessor = lines[n+1].split('.store( "arch",')[1].strip().replace('"','').replace(' );','')
+              architecture.accessor = accessor
+
+              self.logger.debug("Requesting architecture details for accessor '%s', may take some time, please wait ...", accessor)
               url = '/'.join((self.PFAM_DOMAIGRAPHS_URL,architecture.pfam_family))
               url = '?arch='.join((url,accessor))
-              architecture.accessor = accessor
-              self.logger.debug("Receiving architectures for accessor '%s', may take some time, please wait ...", accessor)
-
               soup = BeautifulSoup(self.__get_content(url))
+
               for item in soup.div.find_all('div'):
                 if not len(item):
                   continue
                 text = ' '.join(item.text.split())
                 architecture.add_member(text)
-    return architectures
+
+        all_architectures.extend(architectures)
+    return all_architectures
 
 
 def process(options):
