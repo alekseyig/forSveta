@@ -7,14 +7,14 @@ if '%x' % sys.hexversion < '2070500':
   print "Your python version '%s.%s.%s' is old, please update to the latest '2.7.x' one from 'http://www.python.org/download/'." % (maj, min,micro)
   sys.exit(1)
 
-import os, urllib2, logging, time, urllib, socket
+import os, urllib2, logging, time, urllib, socket, StringIO
 from argparse import ArgumentParser
 from xml.dom.minidom import parse
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
 import html5lib
 from bs4 import BeautifulSoup
-import curly
+import pylibcurl
 
 DEFAULT_TIMEOUT = 60 * 10
 PFAM_DOMAIN = 'http://pfam.sanger.ac.uk'
@@ -278,8 +278,14 @@ class PfamConnector(BaseWithLogger):
 
   def __get_content(self, url):
     self.logger.debug("Retrieving content from '%s'...", url)
-    result = curly.curl(url, '-H', 'Expect', '-L', '-retry', '2')
-    return result.read()
+    curl = pylibcurl.Curl(url, header='Expect', followlocation=1)
+    data = StringIO.StringIO()
+    curl.writefunction = data.write
+    curl.perform()
+    result = data.getvalue()
+    return result
+    #result = curly.curl(url, '-H', 'Expect', '-L', '-retry', '2')
+    #return result.read()
 
 
   def process_found_pfam_families(self):
