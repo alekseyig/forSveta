@@ -1,0 +1,6 @@
+bs4
+requests
+typing
+curly
+biopython
+pylibcurl
