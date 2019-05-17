@@ -4,3 +4,4 @@ typing
 curly
 biopython
 pylibcurl
+xlwt
