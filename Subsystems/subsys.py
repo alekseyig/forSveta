@@ -22,7 +22,7 @@ WHITE_BG = '#FFFFFF'
 BLACK_FG = '#000000'
 RED_FG = '#FF0000'
 
-NK_DIFF = 50000
+NK_DIFF = 5000
 
 
 class Gene(object):
@@ -53,8 +53,10 @@ class Subsystems(object):
     def collect_genes(self):
         self.genes = []  # type: list[Gene]
         for dirpath, _, filenames in os.walk(self.input_dir):
+            filenames.sort()
             for i, fname in enumerate(filenames):
                 path = os.path.join(dirpath, fname)
+                print "Processing genome:", fname
 
                 rast_job_id = os.path.split(path)[-1].split('_')[0] if "_" in path else ""
 
@@ -89,11 +91,11 @@ class Subsystems(object):
 
     def __next_color(self, hex_color):
         h, s, v = hex_to_hsv(hex_color)
-        h %= 360
         if h == 0:
             h = 20
         else:
             h += (h/100. * 20)
+        h %= 360
         return hsv_to_hex((h, s, v)).upper()
 
     def _colorize_genes(self):
