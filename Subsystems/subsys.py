@@ -7,6 +7,7 @@ from colorutils.convert import *
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import SeqFeature
+from typing import List
 
 import xlsxwriter
 
@@ -44,17 +45,19 @@ class Subsystems(object):
         self.input_file = input_file
         self.input_dir = input_dir
 
-        self.wb = xlsxwriter.Workbook('/Users/alekseyzhukov/b.xlsx')
+        self.genes = []  # type: List[Gene]
+        self.annotations = []  # type: List[(str, str)]
+
+        self.wb = xlsxwriter.Workbook(os.path.join(os.path.expanduser("~"), 'raw_sybsystems.xlsx'))
         self.wsheet = self.wb.add_worksheet()
 
     def close(self):
         self.wb.close()
 
     def collect_genes(self):
-        self.genes = []  # type: list[Gene]
         for dirpath, _, filenames in os.walk(self.input_dir):
             filenames.sort()
-            for i, fname in enumerate(filenames):
+            for fname in filenames:
                 path = os.path.join(dirpath, fname)
                 print "Processing genome:", fname
 
@@ -74,7 +77,7 @@ class Subsystems(object):
                             continue
 
                         gene_annot = feature.qualifiers['product'][0]  # type: str
-                        for i, (annot,_) in enumerate(self.annotations):
+                        for (annot, _) in self.annotations:  # type: str
                             if annot in gene_annot:
                                 gene = Gene()
                                 gene.genome_id = genome_id
@@ -102,53 +105,58 @@ class Subsystems(object):
         genomes = set([g.genome_name for g in self.genes])
 
         # setting bg color
-        current_bg_color = None
-        seen_genes = []
         for genome in genomes:
+            current_bg_color = None
+            last_seen_gene = None
+
             genes = [g for g in self.genes if g.genome_name == genome]
             genes.sort(key=lambda x: int(x.id.split('.')[-1]))
 
             for gene in genes:
-                seen_gene = None
-                for sg in seen_genes:
-                    if sg.id == gene.id:
-                        seen_gene = sg
+                if last_seen_gene is None:
+                    last_seen_gene = gene
+                    continue
 
-                if seen_gene is None:
-                    seen_genes.append(gene)
-                else:
-                    bg_color = seen_gene.bg_color
+                if gene.id == last_seen_gene.id:
+                    bg_color = last_seen_gene.bg_color
                     if bg_color == WHITE_BG and current_bg_color is None:
-                        seen_gene.bg_color = BLUE_BG
+                        last_seen_gene.bg_color = BLUE_BG
                         gene.bg_color = BLUE_BG
                         current_bg_color = BLUE_BG
                     elif bg_color == WHITE_BG and current_bg_color is not None:
                         current_bg_color = self.__next_color(current_bg_color)
                         gene.bg_color = current_bg_color
-                        seen_gene.bg_color = current_bg_color
+                        last_seen_gene.bg_color = current_bg_color
                     else:
                         gene.bg_color = bg_color
+                last_seen_gene = gene
 
         # setting fg color
-        current_fg_color = RED_FG
         for genome in genomes:
+            current_fg_color = RED_FG
+            groups = []
+
             genes = [g for g in self.genes if g.genome_name == genome]
             genes.sort(key=lambda x: int(x.location.start))
-            groups = []
+
             last_end = None
+            last_start = None
             for g in genes:
                 if last_end is None:
                     last_end = g.location.end
-                    groups.append([g])
+                    last_start = g.location.start
+                    groups.append({g})
                     continue
 
-                if abs(g.location.start - last_end) <= NK_DIFF:
-                    groups[-1].append(g)
+                if abs(g.location.start - last_end) <= NK_DIFF or\
+                        (last_start <= g.location.end and g.location.start <= last_end):
+                    groups[-1].add(g)
                 else:
-                    groups.append([g])
+                    groups.append({g})
+                last_start, last_end = g.location.start, g.location.end
 
             for group in groups:
-                if len(group) == 1:
+                if len(set([g.id for g in group])) == 1:
                     continue
                 else:
                     for g in group:
@@ -225,14 +233,13 @@ class Subsystems(object):
                 col += 1
 
     def get_annotations(self):
-        self.annotations = []  # type: list[(str,str)]
         with open(self.input_file) as f:
             for ln in f:
                 if not len(ln):
                     continue
                 try:
-                    short_name, annotation = ln.strip().split('\t')
-                except Exception as e:
+                    short_name, annotation = ln.strip().split('\t')  # type: str
+                except Exception:
                     print "Please check the format of your Annotations input file, some lines are mis-formatted"
                     sys.exit(1)
                 self.annotations.append((annotation, short_name))
