@@ -59,7 +59,7 @@ class Subsystems(object):
             filenames.sort()
             for fname in filenames:
                 path = os.path.join(dirpath, fname)
-                print "Processing genome:", fname
+                print("Processing genome:", fname)
 
                 rast_job_id = os.path.split(path)[-1].split('_')[0] if "_" in path else ""
 
@@ -214,7 +214,7 @@ class Subsystems(object):
                 col_num = max(col_num, len(_genes))
                 genes_by_genome[genome] = _genes
 
-            for i in xrange(col_num):
+            for i in range(col_num):
                 row = 0
                 self.wsheet.write(row, col, short_name, bold)
                 row += 1
@@ -240,7 +240,7 @@ class Subsystems(object):
                 try:
                     short_name, annotation = ln.strip().split('\t')  # type: str
                 except Exception:
-                    print "Please check the format of your Annotations input file, some lines are mis-formatted"
+                    print("Please check the format of your Annotations input file, some lines are mis-formatted")
                     sys.exit(1)
                 self.annotations.append((annotation, short_name))
 
